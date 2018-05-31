@@ -1,3 +1,19 @@
+
+#if defined(WIN32)
+
+	// Define som stuff to make this build on Win	
+
+	#define M_PI 3.14159
+	#define MAXFLOAT FLT_MAX
+
+	#include <stdlib.h>     /* srand, rand */
+
+	double drand48() {
+		return double(rand()) / RAND_MAX;
+	}
+
+#endif
+
 #include <iostream>
 #include "sphere.h"
 #include "moving_sphere.h"
@@ -14,6 +30,17 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+// Include threading headers
+#include <thread>
+#include <mutex>
+
+// Include time measurement
+#include <chrono>
+
+#include <sstream>
 
 vec3 color(const ray& r, hitable *world, int depth) {
     hit_record rec;
@@ -241,10 +268,91 @@ hitable *random_scene() {
     return new bvh_node(list,i, 0.0, 1.0);
 }
 
-int main() {
-    int nx = 800;
-    int ny = 800;
-    int ns = 100;
+inline int intmax(int a, int b) { return a > b ? a : b; }
+
+void rayTrace(int* nextTileX, int* nextTileY, std::mutex* tileInfoMutex, int tileWidth, int tileHeight, int nx, int ny, int ns, camera cam, hitable* world, char* buffer) {
+
+	// Run until all tiles have been processed
+	while (true) {
+
+		// Use mutex to access shared information about next tile to render
+		tileInfoMutex->lock();
+
+		// Get next tile screen position from shared variables
+		int tileX = *nextTileX;
+		int tileY = *nextTileY;
+
+		// Advance to next tile
+		*nextTileX += tileWidth;
+
+		// Handle screen borders
+		if (*nextTileX >= nx) {
+			// Advance to next line
+			*nextTileX = 0;
+			*nextTileY += tileHeight;
+		}
+
+		tileInfoMutex->unlock();
+
+		// Terminate raytracing when we go beyond screen borders
+		if (tileY >= ny) return;
+
+		// Clip tile to screen borders
+		tileWidth = tileWidth - intmax(0, tileX + tileWidth - nx);
+		tileHeight = tileHeight - intmax(0, tileY + tileHeight - ny);
+
+		// Raytrace the tile area, store result to shared buffer
+		for (int j = tileY; j < tileY + tileHeight; j++) {
+			for (int i = tileX; i < tileX + tileWidth; i++) {
+				vec3 col(0, 0, 0);
+				for (int s = 0; s < ns; s++) {
+					float u = float(i + drand48()) / float(nx);
+					float v = float(j + drand48()) / float(ny);
+					ray r = cam.get_ray(u, v);
+					vec3 p = r.point_at_parameter(2.0);
+					col += color(r, world, 0);
+				}
+				col /= float(ns);
+				col = vec3(sqrt(col[0]), sqrt(col[1]), sqrt(col[2]));
+				int ir = int(255.99*col[0]);
+				int ig = int(255.99*col[1]);
+				int ib = int(255.99*col[2]);
+
+				//std::cout << ir << " " << ig << " " << ib << "\n";
+
+				// Calculate pixel position in target buffer
+				int bufferIdx = (i + ((ny - 1) - j) * nx) * 3;
+
+				buffer[bufferIdx] = ir;
+				buffer[bufferIdx + 1] = ig;
+				buffer[bufferIdx + 2] = ib;
+			}
+		}
+	}
+
+}
+
+
+int main(int argc, char* argv[]) {
+    int nx = 955;
+    int ny = 500;
+    int ns = 2000;
+
+	int tileWidth = 32;
+	int tileHeight = 32;
+
+	// Parse tile size from cmd. line
+	if (argc > 2) {
+		std::istringstream iss(argv[2]);
+		int val;
+
+		if (iss >> val)
+		{
+			tileWidth = val;
+			tileHeight = tileWidth;
+		}
+	}
+
     std::cout << "P3\n" << nx << " " << ny << "\n255\n";
     hitable *list[5];
     float R = cos(M_PI/4);
@@ -270,24 +378,54 @@ int main() {
 
     camera cam(lookfrom, lookat, vec3(0,1,0), vfov, float(nx)/float(ny), aperture, dist_to_focus, 0.0, 1.0);
 
-    for (int j = ny-1; j >= 0; j--) {
-        for (int i = 0; i < nx; i++) {
-            vec3 col(0, 0, 0);
-            for (int s=0; s < ns; s++) {
-                float u = float(i+drand48())/ float(nx);
-                float v = float(j+drand48())/ float(ny);
-                ray r = cam.get_ray(u, v);
-                vec3 p = r.point_at_parameter(2.0);
-                col += color(r, world,0);
-            }
-            col /= float(ns);
-            col = vec3( sqrt(col[0]), sqrt(col[1]), sqrt(col[2]) );
-            int ir = int(255.99*col[0]); 
-            int ig = int(255.99*col[1]); 
-            int ib = int(255.99*col[2]); 
-            std::cout << ir << " " << ig << " " << ib << "\n";
-        }
-    }
+	// Allocate target buffer
+	char* buffer = new char[nx * ny * 3];
+
+	// Get the hint of number of HW threads supported
+	unsigned int threadsNum = intmax(1, std::thread::hardware_concurrency());
+	
+	// Override number of threads by input from command line
+	if (argc > 1) {
+		std::istringstream iss(argv[1]);
+		int val;
+
+		if (iss >> val)
+			threadsNum = val;
+	}
+
+	std::thread* threads = new std::thread[threadsNum];
+
+	std::cout << "Using " << threadsNum << " threads and " << tileWidth << "x" << tileHeight << " tiles" << std::endl;
+
+	// Variables for sharing information about next tile to be rendered between threads
+	int nextTileX = 0;
+	int nextTileY = 0;
+	std::mutex tileInfoMutex;
+
+	// Start measuring time
+	std::chrono::high_resolution_clock::time_point tStart = std::chrono::high_resolution_clock::now();
+
+	// Spawn threads
+	for (unsigned int t = 0; t < threadsNum; t++) {
+		threads[t] = std::thread(rayTrace, &nextTileX, &nextTileY, &tileInfoMutex, tileWidth, tileHeight, nx, ny, ns, cam, world, buffer);
+	}
+
+	// Wait for threads to finish
+	for (unsigned int t = 0; t < threadsNum; t++) {
+		threads[t].join();
+	}
+
+	// Stop measuring time
+	std::chrono::high_resolution_clock::time_point tStop = std::chrono::high_resolution_clock::now();
+
+	auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(tStop - tStart).count();
+
+	std::cout << "Raytracing using " << threadsNum << " threads and " << tileWidth << "x" << tileHeight << " tiles took " << duration << " milliseconds." << std::endl;
+
+	// Write result to file
+	stbi_write_bmp("result.bmp", nx, ny, 3, buffer);
+
+	delete[] buffer;
 }
 
 
