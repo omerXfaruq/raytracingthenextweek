@@ -64,7 +64,7 @@ Looking at the code there are following changes (**see main.cc file**):
 
 ## Speedup
 
-Using a CPU that support 8 HW threads we get linear speedup using 1-8 threads for raytracing - this is great! 16 threads and more do not achieve any more speedup as expected.
+Using a CPU that supports 8 HW threads we get linear speedup using 2-8 threads for raytracing - this is great!
 
 ![](perf.png)
 
