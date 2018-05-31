@@ -53,16 +53,18 @@ This code section must be protected by a mutex to avoid multiple threads startin
 
 After all tiles have been rendered the threads terminate execution and program exits.
 
-Looking at the code there are following changes:
+Looking at the code there are following changes (**see main.cc file**):
 
 - Main rendering loop has been moved out of `main` function into `rayTrace` function - this will be executed by each thread in a loop until all screen tiles have been rendered
 - `rayTrace` function starts with a mutex protected section to figure out what tile to render
 - Rendering loop only processes part of screen specified by given tile (care needs to be taken to clip tile boundaries to screen so we won't try to raytrace outside of frame potentially causing segmentation fault) 
 - Output is stored to a dedicated buffer (a byte array) - former approach of outputing color values into console won't work anymore because tiles are processed out of order and at the same time
 - `main` function now spawns threads for raytracing and waits for them to finish (calling join function on each thread) 
-- performance measurement has been added using std::chrono utilities 
+- performance measurement has been added using `std::chrono` utilities 
 
 ## Speedup
+
+Using a CPU that support 8 HW threads we get linear speedup using 1-8 threads for raytracing - this is great! 16 threads and more do not achieve any more speedup as expected.
 
 ![](perf.png)
 
