@@ -334,9 +334,9 @@ void rayTrace(int* nextTileX, int* nextTileY, std::mutex* tileInfoMutex, int til
 
 
 int main(int argc, char* argv[]) {
-    int nx = 955;
-    int ny = 500;
-    int ns = 2000;
+    int nx = 800;
+    int ny = 800;
+    int ns = 100;
 
 	int tileWidth = 32;
 	int tileHeight = 32;
