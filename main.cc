@@ -341,17 +341,12 @@ int main(int argc, char* argv[]) {
 	int tileWidth = 32;
 	int tileHeight = 32;
 
-	// Parse tile size from cmd. line
+	// Select thread number from input
 	if (argc > 2) {
-		std::istringstream iss(argv[2]);
-		int val;
-
-		if (iss >> val)
-		{
-			tileWidth = val;
-			tileHeight = tileWidth;
-		}
-	}
+		unsigned int threadsNum =  std::stoi(argv[2]);
+	}else{
+        unsigned int threadsNum = intmax(1, std::thread::hardware_concurrency());
+    }
 
     std::cout << "P3\n" << nx << " " << ny << "\n255\n";
     hitable *list[5];
