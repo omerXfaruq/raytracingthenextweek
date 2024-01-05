@@ -1,2 +1,2 @@
 make -j4
-sudo perf stat -e cache-misses ./raytracingthenextweek 4
+sudo erf stat -B -e cache-references,cache-misses,cycles,instructions,branches,faults,migrations ./raytracingthenextweek 4
